@@ -86,10 +86,42 @@ function isTopicMissingError(err: unknown): boolean {
   const d = err.description.toLowerCase();
   return (
     d.includes('message thread not found') ||
+    d.includes('message_thread_not_found') ||
     d.includes('topic_deleted') ||
     d.includes('topic_closed') ||
     d.includes('thread_not_found')
   );
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function relayWithRetry(
+  api: Api,
+  msg: Message,
+  sourceChatId: number,
+  targetChatId: number,
+  header: string,
+  messageThreadId: number,
+  attempts: number
+): Promise<void> {
+  let lastErr: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      await relayMessage(api, msg, sourceChatId, targetChatId, header, messageThreadId);
+      return;
+    } catch (err) {
+      lastErr = err;
+      if (!isTopicMissingError(err)) throw err;
+      // Newly-created forum topics can take a moment to accept messages.
+      // A short backoff here prevents "first message missing" races.
+      await sleep(350 * Math.pow(2, i));
+    }
+  }
+  throw lastErr;
 }
 
 /**
@@ -219,7 +251,15 @@ async function handleCustomerMessage(
   const header = `💬 <b>${escapeHtml(displayName(rec))}:</b>`;
 
   const doRelay = (record: CustomerRecord) =>
-    relayMessage(ctx.api, msg, from.id, adminGroupId, header, record.topicId);
+    relayWithRetry(
+      ctx.api,
+      msg,
+      from.id,
+      adminGroupId,
+      header,
+      record.topicId,
+      created ? 4 : 2
+    );
 
   try {
     await doRelay(rec);
