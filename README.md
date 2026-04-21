@@ -72,10 +72,21 @@ You only have to do this once.
 
 ### 3. Find the admin group's numeric ID
 
-The ID you need looks like `-1001234567890` (negative, starting with `-100`).
-Two easy ways to get it:
+The id you need looks like `-1001234567890` (negative, starts with `-100`).
 
-- Forward any message from the admin group to
+> **Warning: Telegram Web URLs are misleading.**
+> The number in the address bar on `web.telegram.org/k/#-1234567890` is
+> _not_ the Bot-API id. If you saw such a URL, the correct id is
+> `-100` + `1234567890` = `-1001234567890`. Don't hand-edit — use one of
+> the methods below instead.
+
+Pick whichever you prefer:
+
+- **Easiest – built-in scout mode.** Leave `ADMIN_GROUP_ID` empty in `.env`
+  and start the bot (`pnpm dev`). It will tell you to add it to the admin
+  group and send any message there; the moment you do, it prints (and
+  replies with) the correct id. Paste that into `.env` and restart.
+- **External bot.** Forward any message from the admin group to
   [@userinfobot](https://t.me/userinfobot) – it prints the `Chat id`.
 - Or temporarily add [@RawDataBot](https://t.me/RawDataBot) to the group and
   read `chat.id` from the JSON it posts, then kick it.
@@ -144,15 +155,17 @@ src/
 ## Troubleshooting
 
 - **`Bad Request: chat not found`** when the bot tries to open a topic:
-  1. `ADMIN_GROUP_ID` is wrong – must be the full negative supergroup id,
-     e.g. `-1001234567890`. A regular group id (positive, or `-<small int>`)
-     will not work.
+  1. `ADMIN_GROUP_ID` is wrong. This is by far the most common cause.
+     Ids pulled from `web.telegram.org/k/` URLs are **not** the Bot-API
+     format – they're the short internal id without the `-100` prefix.
+     Clear the value in `.env` and let the bot enter scout mode (see
+     step 3 above), or use `@userinfobot`.
   2. The bot is not a member of the group yet – add it first.
   3. The group is a regular group, not a supergroup. Enable **Topics** in
      the group settings; that converts it to a supergroup automatically.
 
-  The bot now calls `getChat` at startup and prints a targeted hint for
-  each of these cases, so the log line right above the crash will tell you
+  The bot calls `getChat` at startup and prints a targeted hint for each
+  of these cases, so the log line right above the crash will tell you
   which one it is.
 
 - **Customer messages don't appear** even though the bot looks healthy:

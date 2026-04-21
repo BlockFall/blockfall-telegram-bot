@@ -6,9 +6,26 @@ loadDotenv();
 const configSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   BOT_TOKEN: z.string().min(1, 'BOT_TOKEN is required'),
-  ADMIN_GROUP_ID: z.coerce.number().int().refine((n) => n < 0, {
-    message: 'ADMIN_GROUP_ID must be the negative supergroup ID (e.g. -1001234567890)',
-  }),
+  ADMIN_GROUP_ID: z
+    .string()
+    .optional()
+    .transform((v, ctx): number | undefined => {
+      if (v === undefined) return undefined;
+      const trimmed = v.trim();
+      // Allow empty or placeholder so the bot can start in scout mode.
+      if (trimmed === '' || trimmed.startsWith('<')) return undefined;
+      const n = Number(trimmed);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n >= 0) {
+        ctx.addIssue({
+          code: 'custom',
+          message:
+            'ADMIN_GROUP_ID must be the full negative supergroup id, e.g. -1001234567890 ' +
+            '(use @userinfobot to get it – URL ids from web.telegram.org/k/ are NOT the same).',
+        });
+        return z.NEVER;
+      }
+      return n;
+    }),
   DATA_FILE: z.string().default('data/customers.json'),
   WELCOME_MESSAGE: z
     .string()

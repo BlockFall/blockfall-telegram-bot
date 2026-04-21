@@ -1,11 +1,4 @@
-import {
-  Bot,
-  GrammyError,
-  HttpError,
-  type Api,
-  type Context,
-  type Filter,
-} from 'grammy';
+import { Bot, GrammyError, HttpError, type Api, type Context, type Filter } from 'grammy';
 import type { Message } from 'grammy/types';
 import config from './config.ts';
 import { CustomerTopicStore, type CustomerRecord } from './storage.ts';
@@ -47,10 +40,11 @@ function formatCustomerInfo(rec: CustomerRecord): string {
 
 async function createTopicForCustomer(
   api: Api,
+  adminGroupId: number,
   store: CustomerTopicStore,
   from: UserLike
 ): Promise<CustomerRecord> {
-  const topic = await api.createForumTopic(config.ADMIN_GROUP_ID, formatTopicName(from), {
+  const topic = await api.createForumTopic(adminGroupId, formatTopicName(from), {
     icon_color: 0x6fb9f0,
   });
   const rec: CustomerRecord = {
@@ -64,7 +58,7 @@ async function createTopicForCustomer(
   await store.upsert(rec);
 
   try {
-    await api.sendMessage(config.ADMIN_GROUP_ID, formatCustomerInfo(rec), {
+    await api.sendMessage(adminGroupId, formatCustomerInfo(rec), {
       message_thread_id: rec.topicId,
       parse_mode: 'HTML',
     });
@@ -77,12 +71,13 @@ async function createTopicForCustomer(
 
 async function getOrCreateTopic(
   api: Api,
+  adminGroupId: number,
   store: CustomerTopicStore,
   from: UserLike
 ): Promise<{ rec: CustomerRecord; created: boolean }> {
   const existing = store.getByCustomer(from.id);
   if (existing) return { rec: existing, created: false };
-  const rec = await createTopicForCustomer(api, store, from);
+  const rec = await createTopicForCustomer(api, adminGroupId, store, from);
   return { rec, created: true };
 }
 
@@ -110,8 +105,7 @@ async function relayMessage(
   header: string,
   messageThreadId?: number
 ): Promise<boolean> {
-  const threadOpt =
-    messageThreadId === undefined ? {} : { message_thread_id: messageThreadId };
+  const threadOpt = messageThreadId === undefined ? {} : { message_thread_id: messageThreadId };
   const htmlOpts = { ...threadOpt, parse_mode: 'HTML' as const };
 
   const captionFor = (raw: string | undefined): string =>
@@ -178,12 +172,7 @@ async function relayMessage(
   }
   if (msg.location) {
     await api.sendMessage(targetChatId, header, htmlOpts);
-    await api.sendLocation(
-      targetChatId,
-      msg.location.latitude,
-      msg.location.longitude,
-      threadOpt
-    );
+    await api.sendLocation(targetChatId, msg.location.latitude, msg.location.longitude, threadOpt);
     return true;
   }
   if (msg.contact) {
@@ -211,6 +200,7 @@ async function relayMessage(
 
 async function handleCustomerMessage(
   ctx: MessageContext,
+  adminGroupId: number,
   store: CustomerTopicStore
 ): Promise<void> {
   if (ctx.chat.type !== 'private') return;
@@ -224,22 +214,20 @@ async function handleCustomerMessage(
     return;
   }
 
-  const { rec, created } = await getOrCreateTopic(ctx.api, store, from);
+  const { rec, created } = await getOrCreateTopic(ctx.api, adminGroupId, store, from);
 
   const header = `💬 <b>${escapeHtml(displayName(rec))}:</b>`;
 
   const doRelay = (record: CustomerRecord) =>
-    relayMessage(ctx.api, msg, from.id, config.ADMIN_GROUP_ID, header, record.topicId);
+    relayMessage(ctx.api, msg, from.id, adminGroupId, header, record.topicId);
 
   try {
     await doRelay(rec);
   } catch (err) {
     if (!isTopicMissingError(err)) throw err;
-    console.warn(
-      `[bot] topic ${String(rec.topicId)} missing, recreating for ${String(from.id)}`
-    );
+    console.warn(`[bot] topic ${String(rec.topicId)} missing, recreating for ${String(from.id)}`);
     await store.remove(from.id);
-    const fresh = await createTopicForCustomer(ctx.api, store, from);
+    const fresh = await createTopicForCustomer(ctx.api, adminGroupId, store, from);
     await doRelay(fresh);
   }
 
@@ -256,9 +244,10 @@ async function handleCustomerMessage(
 
 async function handleAdminMessage(
   ctx: MessageContext,
+  adminGroupId: number,
   store: CustomerTopicStore
 ): Promise<void> {
-  if (ctx.chat.id !== config.ADMIN_GROUP_ID) return;
+  if (ctx.chat.id !== adminGroupId) return;
   const msg = ctx.message;
 
   const topicId = msg.message_thread_id;
@@ -284,14 +273,14 @@ async function handleAdminMessage(
     const cmd = text.split(/\s+/)[0]?.split('@')[0];
     try {
       if (cmd === '/info') {
-        await ctx.api.sendMessage(config.ADMIN_GROUP_ID, formatCustomerInfo(rec), {
+        await ctx.api.sendMessage(adminGroupId, formatCustomerInfo(rec), {
           message_thread_id: topicId,
           parse_mode: 'HTML',
         });
       } else if (cmd === '/close') {
-        await ctx.api.closeForumTopic(config.ADMIN_GROUP_ID, topicId);
+        await ctx.api.closeForumTopic(adminGroupId, topicId);
       } else if (cmd === '/reopen') {
-        await ctx.api.reopenForumTopic(config.ADMIN_GROUP_ID, topicId);
+        await ctx.api.reopenForumTopic(adminGroupId, topicId);
       }
     } catch (err) {
       console.warn('[bot] admin command failed:', err);
@@ -302,28 +291,24 @@ async function handleAdminMessage(
   const header = `🛟 <b>Support:</b>`;
 
   try {
-    const delivered = await relayMessage(
-      ctx.api,
-      msg,
-      config.ADMIN_GROUP_ID,
-      rec.customerId,
-      header
-    );
+    const delivered = await relayMessage(ctx.api, msg, adminGroupId, rec.customerId, header);
     if (delivered) {
       await ctx.api
-        .setMessageReaction(config.ADMIN_GROUP_ID, msg.message_id, [
-          { type: 'emoji', emoji: '👌' },
-        ])
+        .setMessageReaction(adminGroupId, msg.message_id, [{ type: 'emoji', emoji: '👌' }])
         .catch(() => {
           // Reactions can be unsupported for some accounts/content; safe to ignore.
         });
     }
   } catch (err) {
     const description =
-      err instanceof GrammyError ? err.description : err instanceof Error ? err.message : String(err);
+      err instanceof GrammyError
+        ? err.description
+        : err instanceof Error
+          ? err.message
+          : String(err);
     await ctx.api
       .sendMessage(
-        config.ADMIN_GROUP_ID,
+        adminGroupId,
         `⚠️ Could not deliver message to ${escapeHtml(displayName(rec))}: ${escapeHtml(description)}`,
         { message_thread_id: topicId }
       )
@@ -333,7 +318,7 @@ async function handleAdminMessage(
   }
 }
 
-async function registerCommandMenus(bot: Bot): Promise<void> {
+async function registerCommandMenus(bot: Bot, adminGroupId: number): Promise<void> {
   try {
     await bot.api.setMyCommands([{ command: 'start', description: 'Contact support' }], {
       scope: { type: 'all_private_chats' },
@@ -344,7 +329,7 @@ async function registerCommandMenus(bot: Bot): Promise<void> {
         { command: 'close', description: 'Close this support topic' },
         { command: 'reopen', description: 'Reopen this support topic' },
       ],
-      { scope: { type: 'chat', chat_id: config.ADMIN_GROUP_ID } }
+      { scope: { type: 'chat', chat_id: adminGroupId } }
     );
   } catch (err) {
     console.warn('[bot] failed to set command menus:', err);
@@ -355,19 +340,22 @@ async function registerCommandMenus(bot: Bot): Promise<void> {
  * Fail fast with a helpful message if ADMIN_GROUP_ID points to something
  * the bot can't use (wrong id, bot not in group, topics disabled, etc.).
  */
-async function verifyAdminGroup(bot: Bot): Promise<void> {
+async function verifyAdminGroup(bot: Bot, adminGroupId: number): Promise<void> {
   let chat: Awaited<ReturnType<typeof bot.api.getChat>>;
   try {
-    chat = await bot.api.getChat(config.ADMIN_GROUP_ID);
+    chat = await bot.api.getChat(adminGroupId);
   } catch (err) {
     if (err instanceof GrammyError) {
       throw new Error(
         [
-          `Cannot access admin group ${String(config.ADMIN_GROUP_ID)}: ${err.description}.`,
-          `Checklist:`,
-          `  1. ADMIN_GROUP_ID must be the full negative supergroup id (e.g. -1001234567890).`,
-          `  2. The bot must already be a member of that group.`,
-          `  3. The group must be a supergroup with Topics enabled.`,
+          `Cannot access admin group ${String(adminGroupId)}: ${err.description}.`,
+          `Most likely ADMIN_GROUP_ID is wrong. Note:`,
+          `  • Ids you copy from web.telegram.org/k/ are NOT the Bot-API format.`,
+          `  • The real id is always of the form -100<digits>, e.g. -1001234567890.`,
+          `  • Easiest way to get it: leave ADMIN_GROUP_ID empty in .env,`,
+          `    restart this bot (it will enter scout mode), then send any message`,
+          `    in the admin group – the correct id will be printed for you.`,
+          `Also make sure the bot is a member of the group and Topics is enabled.`,
         ].join('\n'),
         { cause: err }
       );
@@ -377,40 +365,113 @@ async function verifyAdminGroup(bot: Bot): Promise<void> {
 
   if (chat.type !== 'supergroup') {
     throw new Error(
-      `ADMIN_GROUP_ID (${String(config.ADMIN_GROUP_ID)}) is a "${chat.type}", but a forum supergroup is required. ` +
+      `ADMIN_GROUP_ID (${String(adminGroupId)}) is a "${chat.type}", but a forum supergroup is required. ` +
         `In Telegram: Edit group → Group Type → set to a group with Topics enabled (this converts it to a supergroup).`
     );
   }
   if (!chat.is_forum) {
     throw new Error(
-      `ADMIN_GROUP_ID (${String(config.ADMIN_GROUP_ID)}) is a supergroup but Topics (forum mode) is OFF. ` +
+      `ADMIN_GROUP_ID (${String(adminGroupId)}) is a supergroup but Topics (forum mode) is OFF. ` +
         `Open the group → Edit → toggle "Topics" ON and try again.`
     );
   }
   console.log(`[bot] admin group ok: "${chat.title}" (${String(chat.id)})`);
 }
 
-export async function startBot(): Promise<void> {
-  const store = new CustomerTopicStore(config.DATA_FILE);
-  await store.load();
+/**
+ * Scout mode: ADMIN_GROUP_ID is not set, so we can't relay yet. Listen for
+ * any group message and tell the operator which id to paste into .env.
+ */
+async function runScoutMode(bot: Bot): Promise<void> {
+  console.log('');
+  console.log('='.repeat(70));
+  console.log(' ADMIN_GROUP_ID is not set in .env — running in SCOUT MODE.');
+  console.log('');
+  console.log(' 1. Make sure this bot is added to your admin group.');
+  console.log(' 2. Send any message in that group (e.g. type "hi").');
+  console.log(' 3. Copy the printed id below into ADMIN_GROUP_ID in .env.');
+  console.log(' 4. Restart the bot.');
+  console.log('='.repeat(70));
+  console.log('');
 
+  bot.on('message', async (ctx) => {
+    const chat = ctx.chat;
+    const title = 'title' in chat && chat.title ? chat.title : '(no title)';
+    const isForum = chat.type === 'supergroup' && chat.is_forum === true;
+
+    console.log(
+      `[scout] chat id=${String(chat.id)} type=${chat.type} title=${JSON.stringify(title)} is_forum=${String(isForum)}`
+    );
+
+    if (chat.type === 'private') return;
+
+    try {
+      if (chat.type === 'supergroup' && isForum) {
+        await ctx.reply(
+          [
+            `✅ Use this id:`,
+            `<code>${String(chat.id)}</code>`,
+            ``,
+            `Paste it into <b>ADMIN_GROUP_ID</b> in your <code>.env</code> and restart the bot.`,
+          ].join('\n'),
+          { parse_mode: 'HTML' }
+        );
+      } else {
+        const hint =
+          chat.type === 'supergroup'
+            ? 'Topics are OFF. Enable them: Edit group → toggle "Topics" ON.'
+            : 'This is a regular group. Enable "Topics" to convert it to a forum supergroup.';
+        await ctx.reply([`ℹ️ id of this chat: <code>${String(chat.id)}</code>`, hint].join('\n'), {
+          parse_mode: 'HTML',
+        });
+      }
+    } catch (err) {
+      console.warn('[scout] could not reply:', err);
+    }
+  });
+
+  bot.catch((err) => {
+    console.error('[scout] error:', err.error);
+  });
+
+  const shutdown = () => {
+    bot.stop().catch(() => undefined);
+  };
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
+
+  await bot.start({ drop_pending_updates: true, allowed_updates: ['message'] });
+}
+
+export async function startBot(): Promise<void> {
   const bot = new Bot(config.BOT_TOKEN);
   await bot.init();
 
-  const botId = bot.botInfo.id;
+  console.log(`[bot] authenticated as @${bot.botInfo.username} (id=${String(bot.botInfo.id)})`);
 
-  await verifyAdminGroup(bot);
+  const adminGroupId = config.ADMIN_GROUP_ID;
+  if (adminGroupId === undefined) {
+    await runScoutMode(bot);
+    return;
+  }
+
+  await verifyAdminGroup(bot, adminGroupId);
+
+  const store = new CustomerTopicStore(config.DATA_FILE);
+  await store.load();
+
+  const botId = bot.botInfo.id;
 
   bot.on('message', async (ctx) => {
     if (ctx.from.id === botId) return;
 
     if (ctx.chat.type === 'private') {
-      await handleCustomerMessage(ctx, store);
+      await handleCustomerMessage(ctx, adminGroupId, store);
       return;
     }
 
-    if (ctx.chat.id === config.ADMIN_GROUP_ID) {
-      await handleAdminMessage(ctx, store);
+    if (ctx.chat.id === adminGroupId) {
+      await handleAdminMessage(ctx, adminGroupId, store);
     }
   });
 
@@ -425,10 +486,9 @@ export async function startBot(): Promise<void> {
     }
   });
 
-  await registerCommandMenus(bot);
+  await registerCommandMenus(bot, adminGroupId);
 
-  console.log(`[bot] starting as @${bot.botInfo.username} (id=${String(botId)})`);
-  console.log(`[bot] admin group: ${String(config.ADMIN_GROUP_ID)}`);
+  console.log(`[bot] admin group id: ${String(adminGroupId)}`);
 
   const shutdown = (signal: string) => {
     console.log(`[bot] received ${signal}, stopping...`);
