@@ -1,0 +1,9 @@
+{
+  "singleQuote": true,
+  "arrowParens": "always",
+  "bracketSpacing": true,
+  "printWidth": 100,
+  "trailingComma": "es5",
+  "semi": true,
+  "plugins": ["prettier-plugin-organize-imports"]
+}

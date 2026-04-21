@@ -1,0 +1,28 @@
+{
+  // Use Prettier as the default formatter
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+
+  // Format on save
+  "editor.formatOnSave": true,
+
+  // ESLint settings
+  "eslint.useFlatConfig": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+
+  // Ensure ESLint validates TypeScript files
+  "eslint.validate": [
+    "javascript",
+    "javascriptreact",
+    "typescript",
+    "typescriptreact"
+  ],
+
+  // TypeScript settings (all optional)
+  "js/ts.tsdk.path": "node_modules/typescript/lib", // Use project's TS version
+  "js/ts.tsdk.promptToUseWorkspaceVersion": true, // Prompt to use workspace TS
+  // Import preferences
+  "js/ts.preferences.importModuleSpecifier": "relative",
+  "js/ts.suggest.autoImports": true
+}

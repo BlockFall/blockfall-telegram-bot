@@ -1,0 +1,15 @@
+node_modules/
+build/
+dist/
+export/
+deployments/
+artifacts/
+cache/
+coverage/
+package.json
+typechain/
+dapp_test/test.sol
+_lib/
+.dappp
+*.json
+.yalc
